@@ -12,6 +12,7 @@
 
 int trig_pin = 30;
 int echo_pin = 31;
+
 int trig2_pin = 5;
 int echo2_pin = 4;
 
@@ -33,14 +34,14 @@ int rightMotorEN = 6;
 int rightMotor1 = 7;
 int rightMotor2 = 8;
 
-//Used to determine whether or not we should turn left or right randomly
+//Randomly generated number to determine whether to turn left or turn right
 int leftOrRight;
 
 //Data to be received, expecting x-coordinate, y-coordinate, auto or remote controlled
 int joystick[3];
 int payload = sizeof(joystick);
 
-//Declare radio
+//Declare radio with respective chip enable and chip select pins
 RF24 radio(53, 48);
 
 //Pipe for the transmitter and the receiver to use to communicate
@@ -65,6 +66,7 @@ void setup() {
 }
 
 void loop() {
+  //First check if there's data to read to know whether to move or not
   if(radio.available()){
     while(radio.available()){
       radio.read(joystick, sizeof(joystick));
@@ -75,12 +77,11 @@ void loop() {
       }else if(joystick[2] == 0){
         int x_axis = joystick[0];
         int y_axis = joystick[1];
-        
         //Set initial speed to 0
         int motor1_speed = 0, motor2_speed = 0;
 
         //Check if y axis is less than the center coordinate to determine whether to reverse or move forward
-        //Reverse both motors so tank does not turn
+        //Reverse or forward both motors so that the tank moves properly and does not turn in place
         if(y_axis < 520){
           go_reverse(leftMotor1, leftMotor2);
           go_reverse(rightMotor1, rightMotor2);    
@@ -96,12 +97,11 @@ void loop() {
           if(x_axis < 506){
             x_axis = map(x_axis, 506, 0, 0, 255);
             turnLeft();
-            accelerate(x_axis, x_axis);
           }else{
             x_axis = map(x_axis, 510, 1023, 0, 255);
             turnRight();
-            accelerate(x_axis, x_axis);
           }
+          accelerate(x_axis, x_axis);
           delay(20);
         }else if(y_axis < 522 || y_axis > 526){
           //Use y as primary driver
@@ -113,7 +113,9 @@ void loop() {
           //Add 255 as offset
           if(x_axis < 506 || x_axis > 510){
             x_axis = map(x_axis, 0, 1023, -255, 255);
-            
+
+            //Accelerate the motor on the side where x-axis is pointed 
+            //and decelerate the other motor to turn
             if(x_axis > 0){
               motor1_speed = (motor1_speed + x_axis) + 255;
               motor2_speed = (motor2_speed - x_axis) + 255;  
@@ -126,6 +128,8 @@ void loop() {
             motor1_speed = map(motor1_speed, 0, 770, 0, 255);
             motor2_speed = map(motor2_speed, 0, 770, 0, 255);
           }
+
+          //Analog write to both motor 1 and 2 enable pins to move
           accelerate(motor1_speed, motor2_speed);
           delay(20);
         }else{
