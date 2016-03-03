@@ -11,7 +11,7 @@ const byte joystick_x = 0;
 const byte joystick_y = 1;
 const byte right_button = 3;
 
-//state whether or not the tank should be self-driving
+//state 0 = manual control, state 1 = automatic mode
 int state = 0;
 RF24 radio(9, 10);
 
