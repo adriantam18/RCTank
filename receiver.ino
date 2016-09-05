@@ -16,28 +16,27 @@ int echo_pin = 31;
 int trig2_pin = 5;
 int echo2_pin = 4;
 
-//Sonar1 is left sonar and sonar2 is right sonar
-NewPing sonar1(trig_pin, echo_pin, 100);
-NewPing sonar2(trig2_pin, echo2_pin, 100);
+NewPing left_sonar(trig_pin, echo_pin, 100);
+NewPing right_sonar(trig2_pin, echo2_pin, 100);
 
 //Enable pin for the left motor
-int leftMotorEN = 12;
+int left_motor_en = 12;
 
 //Logic pins for the left motor
-int leftMotor1 = 11;
-int leftMotor2 = 10;
+int left_motor_l1 = 11;
+int left_motor_l2 = 10;
 
 //Enable pin for the right motor
-int rightMotorEN = 6;
+int right_motor_en = 6;
 
 //Logic pins for the right motor
-int rightMotor1 = 7;
-int rightMotor2 = 8;
+int right_motor_l1 = 7;
+int right_motor_l2 = 8;
 
 //Randomly generated number to determine whether to turn left or turn right
-int leftOrRight;
+int turn_dir;
 
-//Data to be received, expecting x-coordinate, y-coordinate, auto or remote controlled
+//Data to be received, expecting x-coordinate, y-coordinate, state(0 = manual, 1 = auto)
 int joystick[3];
 int payload = sizeof(joystick);
 
@@ -48,13 +47,13 @@ RF24 radio(53, 48);
 const uint64_t pipe = 0xE8E8F0F0E1LL;
 
 void setup() {
-  pinMode(leftMotorEN, OUTPUT);
-  pinMode(leftMotor1, OUTPUT);
-  pinMode(leftMotor2, OUTPUT);
+  pinMode(left_motor_en, OUTPUT);
+  pinMode(left_motor_l1, OUTPUT);
+  pinMode(left_motor_l2, OUTPUT);
 
-  pinMode(rightMotorEN, OUTPUT);
-  pinMode(rightMotor1, OUTPUT);
-  pinMode(rightMotor2, OUTPUT);
+  pinMode(right_motor_en, OUTPUT);
+  pinMode(right_motor_l1, OUTPUT);
+  pinMode(right_motor_l2, OUTPUT);
   
   Serial.begin(115200);
   radio.begin();
@@ -71,66 +70,57 @@ void loop() {
     while(radio.available()){
       radio.read(joystick, sizeof(joystick));
       if(joystick[2] == 1){
-        //Button was pressed on the controller indicating start automatic driving 
-        //and state switched to self-driving
-        auto_drive();
+        //state = 1 means to move automatically
+        autoDrive();
       }else if(joystick[2] == 0){
-        int x_axis = joystick[0];
-        int y_axis = joystick[1];
-        //Set initial speed to 0
-        int motor1_speed = 0, motor2_speed = 0;
-
+        int x_coord = joystick[0];
+        int y_coord = joystick[1];
+        int left_motor_speed = 0, right_motor_speed = 0;
+        
         //Check if y axis is less than the center coordinate to determine whether to reverse or move forward
         //Reverse or forward both motors so that the tank moves properly and does not turn in place
-        if(y_axis < 520){
-          go_reverse(leftMotor1, leftMotor2);
-          go_reverse(rightMotor1, rightMotor2);    
+        if(y_coord < 520){
+          goReverse(left_motor_l1, left_motor_l2);
+          goReverse(right_motor_l1, right_motor_l2);    
         }else{
-          go_forward(leftMotor1, leftMotor2);
-          go_forward(rightMotor1, rightMotor2);
+          goForward(left_motor_l1, left_motor_l2);
+          goForward(right_motor_l1, right_motor_l2);
         }
 
         //If y is centered and x is not, turn in place in the direction of the analog stick
-        //Use x-axis coordinate to determine the pwm speed
-        if((x_axis < 506 || x_axis > 510) && 
-           (y_axis > 518 && y_axis < 530)){
-          if(x_axis < 506){
-            x_axis = map(x_axis, 506, 0, 0, 255);
+        //Map x-axis coordinate to (0, 255) to determine the pwm speed
+        if(y_coord > 522 && y_coord < 526){
+          int motor_speed = 0;
+          if(x_coord < 506){
+            motor_speed = map(x_coord, 506, 0, 0, 255);
             turnLeft();
-          }else{
-            x_axis = map(x_axis, 510, 1023, 0, 255);
+          }else if(x_coord > 510){
+            motor_speed = map(x_coord, 510, 1023, 0, 255);
             turnRight();
           }
-          accelerate(x_axis, x_axis);
+
+          accelerate(motor_speed, motor_speed);
           delay(20);
-        }else if(y_axis < 522 || y_axis > 526){
-          //Use y as primary driver
-          y_axis = map(y_axis, 0, 1023, -255, 255);
-          motor1_speed = abs(y_axis);
-          motor2_speed = abs(y_axis);
+        }else if(y_coord <= 522 || y_coord >= 526){
+          //Use y-coordinate for determining speed
+          int motor_speed = abs(map(y_coord, 0, 1023, -255, 255));
+          left_motor_speed = motor_speed;
+          right_motor_speed = motor_speed;
 
-          //Add or substract speed depending on x value
-          //Add 255 as offset
-          if(x_axis < 506 || x_axis > 510){
-            x_axis = map(x_axis, 0, 1023, -255, 255);
+          //Used to add or substract speed to a motor depending on direction of joystick
+          int add_speed = abs(map(x_coord, 0, 1023, -255, 255));
 
-            //Accelerate the motor on the side where x-axis is pointed 
-            //and decelerate the other motor to turn
-            if(x_axis > 0){
-              motor1_speed = (motor1_speed + x_axis) + 255;
-              motor2_speed = (motor2_speed - x_axis) + 255;  
-            }else{
-              motor1_speed = (motor1_speed - abs(x_axis)) + 255;
-              motor2_speed = (motor2_speed + abs(x_axis)) + 255;
-            }
-
-            //Speed value might reach to 770 so map back to 0 -> 255
-            motor1_speed = map(motor1_speed, 0, 770, 0, 255);
-            motor2_speed = map(motor2_speed, 0, 770, 0, 255);
+          //If joystick is to the left, slow left motor down and speed right motor up
+          //If to the right, do the opposite
+          if(x_coord < 506){
+            left_motor_speed -= add_speed;
+            right_motor_speed += add_speed;
+          }else if(x_coord > 510){
+            left_motor_speed += add_speed;
+            right_motor_speed -= add_speed;
           }
 
-          //Analog write to both motor 1 and 2 enable pins to move
-          accelerate(motor1_speed, motor2_speed);
+          accelerate(left_motor_speed, right_motor_speed);
           delay(20);
         }else{
           //Joystick is centered in both x and y axis so don't move
@@ -146,21 +136,23 @@ void loop() {
   }
 }
 
-void auto_drive(){
+void autoDrive(){
   //Get measurements from each sensor with some delay in between to mitigate noise
-  int distance = sonar1.ping_cm();
+  int distance = left_sonar.ping_cm();
   delay(30);
-  int distance2 = sonar2.ping_cm();
+  int distance2 = right_sonar.ping_cm();
   delay(30);
 
-  //Check distances, if both sensors return distancese that are above 20cm then keep moving forward
-  //If one sensor returns a distance inside 20cm and the other is greater than 20cm then turn to the direction
-  //of the sensor with greater than 20cm distance reading.
-  //Else choose whether to reverse left or right randomly
-  //Speeds used are constant and currently does not depend on distance
+  /*
+   * Check distances, if both sensors return distancese that are above 20cm then keep moving forward.
+   * If one sensor returns a distance inside 20cm and the other is greater than 20cm then turn to the direction
+   * of the sensor with greater than 20cm distance reading.
+   * Else choose whether to reverse left or right randomly
+   * Speeds used are constant and currently does not depend on distance
+   */
   if((distance > 20 || distance == 0) && (distance2 > 20 || distance == 0)){
-    go_forward(leftMotor1, leftMotor2);
-    go_forward(rightMotor1, rightMotor2);
+    goForward(left_motor_l1, left_motor_l2);
+    goForward(right_motor_l1, right_motor_l2);
     accelerate(255, 255);
   }else if((distance <= 20 && distance >= 1) && (distance2 > 20 || distance2 == 0)){
     turnRight();
@@ -171,10 +163,10 @@ void auto_drive(){
     accelerate(255, 255);
     delay(300);    
   }else if((distance <= 20 && distance >= 1) && (distance2 <= 20 && distance2 >= 1)){
-    go_reverse(leftMotor1, leftMotor2);
-    go_reverse(rightMotor1, rightMotor2);
-    leftOrRight = random(100);
-    if(leftOrRight > 50){
+    goReverse(left_motor_l1, left_motor_l2);
+    goReverse(right_motor_l1, right_motor_l2);
+    turn_dir = random(100);
+    if(turn_dir > 50){
       accelerate(64, 255);
     }else{
       accelerate(255, 64);    
@@ -183,29 +175,29 @@ void auto_drive(){
   }
 }
 
-//Turn in place, move one motor forward and the other backward
+//Turn right in place, move left motor forward and reverse right motor
 void turnRight(){
-  go_forward(leftMotor1, leftMotor2);
-  go_reverse(rightMotor1, rightMotor2);
+  goForward(left_motor_l1, left_motor_l2);
+  goReverse(right_motor_l1, right_motor_l2);
 }
 
-//Turn in place, move one motor forward and the other backward
+//Turn left in place, move right motor forward and reverse left motor
 void turnLeft(){
-  go_forward(rightMotor1, rightMotor2);
-  go_reverse(leftMotor1, leftMotor2);
+  goForward(right_motor_l1, right_motor_l2);
+  goReverse(left_motor_l1, left_motor_l2);
 }
 
-void accelerate(int motor1_speed, int motor2_speed){
-  analogWrite(leftMotorEN, motor1_speed);
-  analogWrite(rightMotorEN, motor2_speed);
+void accelerate(int left_motor_speed, int right_motor_speed){
+  analogWrite(left_motor_en, left_motor_speed);
+  analogWrite(right_motor_en, right_motor_speed);
 }
 
-void go_forward(int logic1, int logic2){
+void goForward(int logic1, int logic2){
   digitalWrite(logic1, LOW);
   digitalWrite(logic2, HIGH);
 }
 
-void go_reverse(int logic1, int logic2){
+void goReverse(int logic1, int logic2){
   digitalWrite(logic1, HIGH);
   digitalWrite(logic2, LOW);
 }
