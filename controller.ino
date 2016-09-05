@@ -16,7 +16,6 @@ int state = 0;
 RF24 radio(9, 10);
 
 int joystick[3];
-int joystick_size = sizeof(joystick);
 const uint64_t pipe = 0xE8E8F0F0E1LL;
 
 void setup() {
@@ -30,11 +29,7 @@ void setup() {
 
 void loop() {
   if(digitalRead(right_button) == LOW){
-    if(state == 0){
-      state = 1;
-    }else if(state == 1){
-      state = 0;
-    }
+    state = ~state;
   }
   
   joystick[0] = analogRead(joystick_x);
